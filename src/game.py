@@ -3,6 +3,10 @@ import sys
 import asyncio
 import logging
 
+from typing import List
+
+import agent.conf
+
 # Set logging level to suppress warnings
 logging.getLogger().setLevel(logging.ERROR)
 # Just disables the warnings
@@ -34,8 +38,16 @@ from objects import CardResp, Card, BidResp
 from claim import Claimer
 from pbn2ben import load
 from util import calculate_seed, get_play_status
-from pimc.PIMC import BGADLL
-from pimc.PIMCDef import BGADefDLL
+# This helps resolve the dependency issue of pythonnet (which needs .NET runtime)
+try:
+    from pimc.PIMC import BGADLL
+    from pimc.PIMCDef import BGADefDLL
+except:
+    print("Cannot import PIMC, which is dependent on pythonnet, which needs .NET runtime.")
+
+# Bridge Agent
+import agent
+from agent.generic_agent import GenericAgent
 
 def get_execution_path():
     # Get the directory where the program is started from either PyInstaller executable or the script
@@ -92,6 +104,7 @@ class Driver:
         self.conceed = None
         self.decl_i = None
         self.strain_i = None
+        self.agents: List[GenericAgent] = []    # The agents
 
     def set_deal(self, board_number, deal_str, auction_str, play_only = None, bidding_only=False):
         self.play_only = play_only
@@ -119,6 +132,11 @@ class Driver:
             self.vuln_ns = self.deal_data.vuln_ns
             self.vuln_ew = self.deal_data.vuln_ew
         self.trick_winners = []
+
+        # Set up the agent players
+        for idx, agent_in_control in enumerate(agent.conf.AGENT_PLAYER):
+            if agent_in_control:
+                self.agents.append(GenericAgent(self.hands[idx]))
 
         # Now you can use hash_integer as a seed
         hash_integer = calculate_seed(deal_str)
@@ -335,6 +353,7 @@ class Driver:
             pimc[0] = None
             pimc[2] = None
 
+        # Set the card player models here
         card_players = [
             AsyncCardPlayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[0], self.verbose),
             AsyncCardPlayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, pimc[1], self.verbose),
@@ -642,9 +661,15 @@ class Driver:
 
         hands_str = self.deal_str.split()
 
+
         await asyncio.sleep(0.01)
 
-        if self.human[(decl_i + 1) % 4]:
+        if agent.conf.AGENT_PLAYER[(decl_i + 1) % 4]:
+            # card_resp = 
+            pass
+        # overwrite the default behavior of ben, agent will take care of the game 
+        # if there is any.
+        elif not all(agent.conf.AGENT_PLAYER) and self.human[(decl_i + 1) % 4]:
             card_resp = await self.factory.create_human_leader().async_lead()
         else:
             bot_lead = AsyncBotLead(
@@ -669,8 +694,10 @@ class Driver:
 
         players = []
         hint_bots = [None, None, None, None]
+        # Use bots to perform for auction
+        all_bots = [False] * 4
 
-        for i, level in enumerate(self.human):
+        for i, level in enumerate(all_bots):
             if self.models.use_bba:
                 from bba.BBA import BBABotBid
                 players.append(BBABotBid(self.models.bba_ns, self.models.bba_ew, i, hands_str[i], vuln, self.dealer_i))
@@ -818,9 +845,12 @@ async def main():
             board_no[0] = (board_no[0] + 1)
 
         # BEN is handling all 4 hands
-        driver.human = [False, False, False, False]
+        driver.human = [False, False, True, False]
         t_start = time.time()
         await driver.run()
+
+        # Check if any agent is playing
+
 
         if not biddingonly:
             with shelve.open(f"{base_path}/gamedb") as db:

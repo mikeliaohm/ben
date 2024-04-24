@@ -48,6 +48,9 @@ except:
 # Bridge Agent
 import agent
 from agent.generic_agent import GenericAgent
+from agent.human_agent import HumanAgent
+
+agent_type = HumanAgent
 
 def get_execution_path():
     # Get the directory where the program is started from either PyInstaller executable or the script
@@ -104,7 +107,6 @@ class Driver:
         self.conceed = None
         self.decl_i = None
         self.strain_i = None
-        self.agents: List[GenericAgent] = []    # The agents
 
     def set_deal(self, board_number, deal_str, auction_str, play_only = None, bidding_only=False):
         self.play_only = play_only
@@ -113,6 +115,7 @@ class Driver:
         self.deal_str = deal_str
         self.hands = deal_str.split()
         self.deal_data = DealData.from_deal_auction_string(self.deal_str, auction_str, "", self.ns, self.ew,  32)
+        self.agents: List[agent_type] = []    # Reset the agents
 
         auction_part = auction_str.split(' ')
         if play_only == None and len(auction_part) > 2: play_only = True
@@ -136,7 +139,9 @@ class Driver:
         # Set up the agent players
         for idx, agent_in_control in enumerate(agent.conf.AGENT_PLAYER):
             if agent_in_control:
-                self.agents.append(GenericAgent(self.hands[idx]))
+                self.agents.append(agent_type(self.hands[idx], idx))
+            else:
+                self.agents.append(None)
 
         # Now you can use hash_integer as a seed
         hash_integer = calculate_seed(deal_str)
@@ -360,6 +365,8 @@ class Driver:
             AsyncCardPlayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[2], self.verbose),
             AsyncCardPlayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[3], self.verbose)
         ]
+        self.agents[0].set_init_x_play(dummy_hand, contract, decl_i)
+        self.agents[2].set_init_x_play(dummy_hand, contract, decl_i)
 
         # check if user is playing and update card players accordingly
         # the card players are allways positioned relative to declarer (lefty = 0, dummy = 1 ...)
@@ -367,15 +374,14 @@ class Driver:
             if self.human[i]:
                 # We are declarer or human declare and dummy
                 if decl_i == i or self.human_declare and decl_i == (i + 2) % 4:
-                    card_players[3] = self.factory.create_human_cardplayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln)
-                    card_players[1] = self.factory.create_human_cardplayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln)
-                    
+                    card_players[3] = self.agents[2]
+
                 # We are lefty
                 if i == (decl_i + 1) % 4:
-                    card_players[0] = self.factory.create_human_cardplayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln)
+                    card_players[0] = self.agents[2]
                 # We are righty
                 if i == (decl_i + 3) % 4:
-                    card_players[2] = self.factory.create_human_cardplayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln)
+                    card_players[2] = self.agents[2]
 
         claimer = Claimer(self.verbose)
 
@@ -411,7 +417,7 @@ class Driver:
                         card_player.set_real_card_played(opening_lead52, player_i)
                         card_player.set_card_played(trick_i=trick_i, leader_i=leader_i, i=0, card=opening_lead)
                     continue
-
+                
                 play_status = get_play_status(card_players[player_i].hand52,current_trick52)
 
                 if isinstance(card_players[player_i], bots.CardPlayer):
@@ -605,12 +611,13 @@ class Driver:
         for player_i in map(lambda x: x % 4, range(leader_i, leader_i + 4)):
             
             if not isinstance(card_players[player_i], bots.CardPlayer):
-                await card_players[player_i].get_card_input()
+                card52 = await card_players[player_i].get_card_input()
                 who = "Human"
             else:
                 who = "NN"
 
-            card52 = np.nonzero(card_players[player_i].hand52)[0][0]
+            if card52 is None:
+                card52 = np.nonzero(card_players[player_i].hand52)[0][0]
             card32 = card52to32(card52)
 
             card_resp = CardResp(card=Card.from_code(card52), candidates=[], samples=[], shape=-1, hcp=-1, quality=None, who=who)
@@ -665,8 +672,7 @@ class Driver:
         await asyncio.sleep(0.01)
 
         if agent.conf.AGENT_PLAYER[(decl_i + 1) % 4]:
-            # card_resp = 
-            pass
+            card_resp = await self.agents[(decl_i + 1) % 4].opening_lead(auction)
         # overwrite the default behavior of ben, agent will take care of the game 
         # if there is any.
         elif not all(agent.conf.AGENT_PLAYER) and self.human[(decl_i + 1) % 4]:

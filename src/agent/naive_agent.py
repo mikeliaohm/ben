@@ -7,26 +7,22 @@ from objects import Card, CardResp
 from .generic_agent import GenericAgent
 from .card_utils import CARD_INDEX_MAP, index_to_card
 
-class Command(enum.Enum):
-    SHOW_HAND = 'show'
-
-class HumanAgent(GenericAgent):
+class NaiveAgent(GenericAgent):
     def choose_card(self, current_trick52: List[int] = None) -> int:
-        while True:
-            card = input("Enter the card to play: ")
-            if card == Command.SHOW_HAND.value:
-                print(f"{self.__position__} hand: {self.current_hand()}")
-                continue
-            # Process the card input and perform the desired actions
-            if self.validate_card(card):
-                card_idx = CARD_INDEX_MAP[card]
-                if not self.validate_follow_suit(card_idx, current_trick52):
-                    print("You have a card in the suit. Please play a card in the suit.")
-                    continue
-                self.play_card(card_idx)
-                return card_idx
+        if current_trick52 is None or len(current_trick52) == 0:
+            card_idx = min(self.__cards__)
+        else:
+            suit = current_trick52[0] // 13
+            if not any(card // 13 == suit for card in self.__cards__):
+                card_idx = min(self.__cards__)
             else:
-                print("Invalid card. Please enter a valid card.")
+                card_idx = max(card for card in self.__cards__ if card // 13 == suit)
+        self.play_card(card_idx)
+        
+        if not self.validate_follow_suit(card_idx, current_trick52):
+            print("You have a card in the suit. Please play a card in the suit.")
+            return self.choose_card(current_trick52)
+        return card_idx
         
     async def opening_lead(self, auction: List[str]) -> CardResp:
         card_idx = self.choose_card()

@@ -40,13 +40,25 @@ class GenericAgent:
         """
         print_deque(self.__played__)
 
-    def validate_card(self, card_str: str) -> bool:
+    def validate_card(self, card_str: str, current_trick52: List[int] = None) -> bool:
         """
         Validate whether a card is in the agent's hand.
         """
         if card_str not in CARD_INDEX_MAP:
             return False
         return CARD_INDEX_MAP[card_str] in self.__cards__
+    
+    def validate_follow_suit(self, card_idx: int, current_trick52: List[int]) -> bool:
+        """
+        Validate whether a card follows the suit of the current trick.
+        """
+        if current_trick52 is None or len(current_trick52) == 0:
+            return True
+        suit = current_trick52[0] // 13
+        return card_idx // 13 == suit or not any(card // 13 == suit for card in self.__cards__)
+    
+    def choose_card(self, current_trick52: List[int] = None) -> int:
+        raise NotImplementedError
     
     def play_card(self, card_idx: int) -> None:
         """
@@ -121,11 +133,11 @@ class GenericAgent:
         if played_to_the_trick_already:
             return
 
-        # if player_i == i:
-        #     return
-        # TODO: check if this is needed? check the declarer's position
-        if player_i == i and (trick_i == 0 and self.__position__.value != (self.__declarer__.value + 1) % 4):
+        if player_i == i:
             return
+        # TODO: check if this is needed? check the declarer's position
+        # if player_i == i and (trick_i == 0 and self.__position__.value != (self.__declarer__.value + 1) % 4):
+        #     return
 
         # update the public hand when the public hand played
         if player_i in (0, 2, 3) and i == 1 or player_i == 1 and i == 3:
